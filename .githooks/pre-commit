@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# Tripwire dla repozytorium publicznego.
+# Przerywa commit, jeśli w plikach ze stagingu znajdzie wzorzec z listy prywatnej.
+#
+# Instalacja (w katalogu repo publicznego):
+#   mkdir -p .githooks
+#   cp pre-commit-guard.sh .githooks/pre-commit
+#   chmod +x .githooks/pre-commit
+#   git config core.hooksPath .githooks
+#
+# Wzorce czytane są z dwóch plików (oba opcjonalne):
+#   .private-patterns        – wersjonowany, wzorce ogólne (e-maile, tokeny)
+#   .private-patterns.local  – NIEwersjonowany, wzorce wrażliwe (nazwa firmy, nazwiska)
+#
+# Świadome pominięcie: git commit --no-verify
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+FILES_STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+
+[ -n "$FILES_STAGED" ] || exit 0
+
+PATTERN_FILES=()
+[ -f "$ROOT/.private-patterns" ]       && PATTERN_FILES+=("$ROOT/.private-patterns")
+[ -f "$ROOT/.private-patterns.local" ] && PATTERN_FILES+=("$ROOT/.private-patterns.local")
+
+[ "${#PATTERN_FILES[@]}" -gt 0 ] || exit 0
+
+FOUND=0
+
+for pattern_file in "${PATTERN_FILES[@]}"; do
+    while IFS= read -r pattern || [ -n "$pattern" ]; do
+        # pomijaj puste linie i komentarze
+        [ -z "$pattern" ] && continue
+        case "$pattern" in \#*) continue ;; esac
+
+        while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            # nie skanuj infrastruktury repo: pliki wzorców, .gitignore i same hooki.
+            # Zawierają wzorce i nazwy plików, które trafiałyby na siebie nawzajem.
+            case "$file" in
+                .private-patterns|.private-patterns.local|.gitignore|.githooks/*) continue ;;
+            esac
+
+            if git show ":$file" 2>/dev/null | grep -Eqi -- "$pattern"; then
+                match="$(git show ":$file" 2>/dev/null | grep -Eni -m1 -- "$pattern")"
+                printf 'BLOKADA  %s\n  wzorzec: %s\n  linia:   %s\n\n' \
+                    "$file" "$pattern" "$match"
+                FOUND=1
+            fi
+        done <<< "$FILES_STAGED"
+    done < "$pattern_file"
+done
+
+if [ "$FOUND" -ne 0 ]; then
+    cat <<'EOF'
+--------------------------------------------------------------------
+Commit zatrzymany: w zmianach są dane pasujące do wzorców prywatnych.
+
+To repozytorium jest publiczne, a historia gita jest trwała.
+Usunięcie pliku w kolejnym commicie NIE usuwa go z historii.
+
+Usuń dane z plików albo, jeśli to fałszywy alarm:
+    git commit --no-verify
+--------------------------------------------------------------------
+EOF
+    exit 1
+fi
+
+exit 0

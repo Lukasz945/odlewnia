@@ -1,0 +1,42 @@
+# Wzorce, które nie mogą trafić do repozytorium publicznego.
+# Jedna linia = jedno wyrażenie regularne (grep -E, bez rozróżniania wielkości liter).
+# Puste linie i linie zaczynające się od # są pomijane.
+#
+# UWAGA: ten plik jest wersjonowany, czyli PUBLICZNY.
+# Nie wpisuj tu nazwy pracodawcy, nazwisk ani nazw projektów wewnętrznych –
+# opublikowałbyś dokładnie to, co chcesz chronić.
+#
+# Wzorce wrażliwe trzymaj w .private-patterns.local, który jest w .gitignore.
+# Hook czyta oba pliki. Utwórz go tak:
+#
+#   cat > .private-patterns.local <<'EOF'
+#   nazwa-pracodawcy
+#   nazwisko-wspolpracownika
+#   nazwa-projektu-wewnetrznego
+#   EOF
+
+# --- dane kontaktowe ---
+[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}
+\+48[ -]?[0-9]{3}[ -]?[0-9]{3}[ -]?[0-9]{3}
+
+# --- klucze i tokeny ---
+-----BEGIN [A-Z ]*PRIVATE KEY-----
+gh[pousr]_[A-Za-z0-9]{16,}
+sk-[A-Za-z0-9_-]{20,}
+xox[baprs]-[A-Za-z0-9-]{10,}
+AKIA[0-9A-Z]{16}
+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.
+
+# --- typowe nazwy sekretów w treści ---
+(api[_-]?key|secret|password|haslo|token)[[:space:]]*[:=][[:space:]]*['\"]?[A-Za-z0-9_-]{12,}
+
+# --- adresy wewnętrzne ---
+# Uwaga: ".local" celowo łapane tylko w adresach URL. Jako końcówka nazwy pliku
+# (settings.local.json, .private-patterns.local) występuje zbyt często, żeby blokować.
+(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}
+\b[a-z0-9][a-z0-9-]*\.(lan|internal|corp)\b
+https?://[a-z0-9.-]+\.local\b
+
+# --- ścieżki z tej maszyny ---
+# Wzorce zależne od Twojej maszyny (katalog domowy, nazwa skarbca) trzymaj
+# w .private-patterns.local, nie tutaj – ten plik jest publiczny.

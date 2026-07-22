@@ -1,0 +1,25 @@
+# .gitignore dla repozytorium PUBLICZNEGO
+
+# Lokalna lista wzorców prywatnych – NIGDY nie commitować
+.private-patterns.local
+
+# Notatki robocze, jeśli trzymasz je obok
+_robocze/
+*.draft.md
+TODO.local.md
+
+# Systemowe
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+.*.swp
+
+# Sekrety – zabezpieczenie na wypadek pomyłki
+*.key
+*.pem
+*.p12
+.env
+.env.*
+secrets.*
+*token*
