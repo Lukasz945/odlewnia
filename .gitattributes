@@ -1,0 +1,4 @@
+# To repozytorium zawiera prompty, nie kod. Skrypty pomocnicze nie powinny
+# decydowac o etykiecie jezyka, ktora GitHub wyswietla obok nazwy repo.
+*.sh          linguist-detectable=false
+.githooks/**  linguist-detectable=false
