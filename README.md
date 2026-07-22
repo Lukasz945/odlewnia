@@ -79,6 +79,12 @@ Pull requesty z poprawkami literowymi i redakcyjnymi: mile widziane, wystarczy P
 
 ---
 
+## Klonujesz to repozytorium?
+
+Uruchom `./setup-hooks.sh` zaraz po `git clone`. Skrypt włącza lokalne zabezpieczenie, które przerywa commit, gdy w zmianach pojawi się adres e-mail, token albo inna prywatna dana.
+
+Jest to potrzebne, bo konfiguracja gita nie jest wersjonowana – sama obecność katalogu `.githooks/` w repozytorium niczego nie uruchamia.
+
 ## Licencja
 
 [CC BY 4.0](LICENSE). Bierz, używaj, przerabiaj, także komercyjnie. Jedyny warunek to podanie autorstwa.

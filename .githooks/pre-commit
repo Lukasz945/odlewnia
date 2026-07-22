@@ -1,47 +1,146 @@
 #!/usr/bin/env bash
 #
 # Tripwire dla repozytorium publicznego.
-# Przerywa commit, jeśli w plikach ze stagingu znajdzie wzorzec z listy prywatnej.
+# Przerywa commit, jesli w plikach ze stagingu znajdzie wzorzec z listy prywatnej.
 #
-# Instalacja (w katalogu repo publicznego):
-#   mkdir -p .githooks
-#   cp pre-commit-guard.sh .githooks/pre-commit
-#   chmod +x .githooks/pre-commit
-#   git config core.hooksPath .githooks
+# Instalacja:  ./setup-hooks.sh
 #
-# Wzorce czytane są z dwóch plików (oba opcjonalne):
-#   .private-patterns        – wersjonowany, wzorce ogólne (e-maile, tokeny)
-#   .private-patterns.local  – NIEwersjonowany, wzorce wrażliwe (nazwa firmy, nazwiska)
+# Wzorce czytane sa z dwoch plikow:
+#   .private-patterns        - wersjonowany, wzorce ogolne (e-maile, tokeny)
+#   .private-patterns.local  - NIEwersjonowany, wzorce wrazliwe (nazwa firmy, nazwiska)
 #
-# Świadome pominięcie: git commit --no-verify
+# Zasada: brak konfiguracji = zatrzymanie commita, nie zgoda na niego.
+#
+# Swiadome pominiecie: git commit --no-verify
+#
+# ZASIEG - czego ten hook NIE robi:
+#   - nie dziala, dopoki `git config core.hooksPath .githooks` nie zostanie
+#     ustawione na danej maszynie; sama obecnosc pliku w repo nie wystarcza,
+#     bo konfiguracja gita nie jest wersjonowana i nie przenosi sie przez klon
+#   - nie wykrywa wzorca poprawnego skladniowo, ale znaczeniowo blednego
+#     (np. `firma.pl`, gdzie kropka pasuje do dowolnego znaku)
+#   - nie zatrzymuje `--no-verify` ani pushu z innego narzedzia
+# Jedyna kontrola po stronie serwera to Secret scanning + Push protection
+# w ustawieniach repozytorium na GitHubie. Ten hook jej nie zastepuje.
 
 set -uo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
+PUBLIC_PATTERNS="$ROOT/.private-patterns"
+LOCAL_PATTERNS="$ROOT/.private-patterns.local"
+
+# obcina biale znaki z obu stron
+trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
+# ---------------------------------------------------------------------
+# 1. Brak konfiguracji zatrzymuje commit (fail-closed)
+# ---------------------------------------------------------------------
+MISSING=""
+[ -f "$PUBLIC_PATTERNS" ] || MISSING="${MISSING}  .private-patterns"$'\n'
+[ -f "$LOCAL_PATTERNS"  ] || MISSING="${MISSING}  .private-patterns.local"$'\n'
+
+if [ -n "$MISSING" ]; then
+    printf '\nBLOKADA: brak pliku z wzorcami ochronnymi:\n\n%s' "$MISSING"
+    cat <<'EOF'
+
+Plik .private-patterns.local celowo nie jest wersjonowany, wiec po swiezym
+klonie repozytorium go nie ma. Bez niego hook nie chroni niczego, a commit
+przechodzacy w takim stanie dawalby falszywe poczucie bezpieczenstwa.
+
+Uruchom:  ./setup-hooks.sh
+
+Swiadome pominiecie: git commit --no-verify
+EOF
+    exit 1
+fi
+
+PATTERN_FILES=("$PUBLIC_PATTERNS" "$LOCAL_PATTERNS")
+
+# ---------------------------------------------------------------------
+# 2. Walidacja wzorcow, zanim cokolwiek zostanie przeskanowane
+#
+#    Komunikaty podaja plik i numer linii, NIGDY tresc wzorca -
+#    wyjscie hooka trafia do logow i transkryptow.
+# ---------------------------------------------------------------------
+# Kanarek: tekst, ktorego zaden sensowny wzorzec ochronny nie powinien
+# dotknac. Zawiera pusta linie, cyfry, polskie znaki, wiersz wciety
+# i zdanie po angielsku - kazdy z tych elementow lapie inna klase pomylki.
+CANARY=$(cat <<'EOF'
+Instrukcja jednostronicowa, bez kodu.
+
+Asystent zadaje cztery pytania i szereguje kierunki wedlug dopasowania.
+Zazolc gesla jazn. Wersja 3.2, rok 2026, numer 12345.
+The quick brown fox jumps over the lazy dog.
+	wiersz wciety tabulatorem
+EOF
+)
+
+SYNTAX_ERRORS=0
+
+for pattern_file in "${PATTERN_FILES[@]}"; do
+    lineno=0
+    while IFS= read -r raw || [ -n "$raw" ]; do
+        lineno=$((lineno + 1))
+        pattern="$(trim "$raw")"
+        [ -z "$pattern" ] && continue
+        case "$pattern" in \#*) continue ;; esac
+
+        printf '' | grep -E -- "$pattern" >/dev/null 2>&1
+        rc=$?
+        if [ "$rc" -ge 2 ]; then
+            printf 'BLAD SKLADNI   %s:%d\n' "$(basename "$pattern_file")" "$lineno"
+            SYNTAX_ERRORS=1
+            continue
+        fi
+
+        if printf '%s\n' "$CANARY" | grep -Eqi -- "$pattern" 2>/dev/null; then
+            printf 'OSTRZEZENIE    %s:%d - wzorzec trafia w neutralny tekst,\n' \
+                   "$(basename "$pattern_file")" "$lineno"
+            printf '               wiec prawdopodobnie zablokuje wszystko\n'
+        fi
+    done < "$pattern_file"
+done
+
+if [ "$SYNTAX_ERRORS" -ne 0 ]; then
+    cat <<'EOF'
+
+--------------------------------------------------------------------
+Commit zatrzymany: wzorzec ochronny ma blad skladni.
+
+Wyrazenia, ktorego grep nie potrafi wykonac, nie da sie tez uzyc do
+ochrony - taki wzorzec po cichu przestaje cokolwiek robic.
+
+Popraw wskazana linie albo ja zakomentuj.
+--------------------------------------------------------------------
+EOF
+    exit 1
+fi
+
+# ---------------------------------------------------------------------
+# 3. Skanowanie plikow ze stagingu
+# ---------------------------------------------------------------------
 FILES_STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
-
 [ -n "$FILES_STAGED" ] || exit 0
-
-PATTERN_FILES=()
-[ -f "$ROOT/.private-patterns" ]       && PATTERN_FILES+=("$ROOT/.private-patterns")
-[ -f "$ROOT/.private-patterns.local" ] && PATTERN_FILES+=("$ROOT/.private-patterns.local")
-
-[ "${#PATTERN_FILES[@]}" -gt 0 ] || exit 0
 
 FOUND=0
 
 for pattern_file in "${PATTERN_FILES[@]}"; do
-    while IFS= read -r pattern || [ -n "$pattern" ]; do
-        # pomijaj puste linie i komentarze
+    while IFS= read -r raw || [ -n "$raw" ]; do
+        pattern="$(trim "$raw")"
         [ -z "$pattern" ] && continue
         case "$pattern" in \#*) continue ;; esac
 
         while IFS= read -r file; do
             [ -z "$file" ] && continue
-            # nie skanuj infrastruktury repo: pliki wzorców, .gitignore i same hooki.
-            # Zawierają wzorce i nazwy plików, które trafiałyby na siebie nawzajem.
+            # nie skanuj infrastruktury repo: pliki wzorcow, .gitignore i same hooki.
+            # Zawieraja wzorce i nazwy plikow, ktore trafialyby na siebie nawzajem.
             case "$file" in
-                .private-patterns|.private-patterns.local|.gitignore|.githooks/*) continue ;;
+                .private-patterns|.private-patterns.local|.gitignore|.githooks/*|setup-hooks.sh) continue ;;
             esac
 
             if git show ":$file" 2>/dev/null | grep -Eqi -- "$pattern"; then
@@ -57,12 +156,12 @@ done
 if [ "$FOUND" -ne 0 ]; then
     cat <<'EOF'
 --------------------------------------------------------------------
-Commit zatrzymany: w zmianach są dane pasujące do wzorców prywatnych.
+Commit zatrzymany: w zmianach sa dane pasujace do wzorcow prywatnych.
 
-To repozytorium jest publiczne, a historia gita jest trwała.
-Usunięcie pliku w kolejnym commicie NIE usuwa go z historii.
+To repozytorium jest publiczne, a historia gita jest trwala.
+Usuniecie pliku w kolejnym commicie NIE usuwa go z historii.
 
-Usuń dane z plików albo, jeśli to fałszywy alarm:
+Usun dane z plikow albo, jesli to falszywy alarm:
     git commit --no-verify
 --------------------------------------------------------------------
 EOF
